@@ -2,6 +2,7 @@ import logging
 from telegram import Update, InlineKeyboardButton, InlineKeyboardMarkup
 from telegram.ext import ApplicationBuilder, CommandHandler, CallbackQueryHandler, MessageHandler, filters, ContextTypes
 from datetime import datetime
+import pytz
 from config import BOT_TOKEN, ALLOWED_USER_IDS, CHANNEL_CHAT_ID
 from menu import get_table_menu, get_item_menu
 
@@ -82,7 +83,11 @@ async def handle_text(update: Update, context: ContextTypes.DEFAULT_TYPE):
         try:
             players = int(update.message.text)
             state['players'] = players
-            start_time = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
+            
+            iran_tz = pytz.timezone('Asia/Tehran')
+            now_iran = datetime.now(tz=iran_tz)
+            start_time = now_iran.strftime("%H:%M")  # فقط ساعت و دقیقه
+            
             msg = (
                 f"🎲 شروع بازی\n"
                 f"🪑 میز: {state['table']}\n"

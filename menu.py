@@ -7,7 +7,7 @@ def get_table_menu():
     for i in range(1, 16):
         buttons.append([InlineKeyboardButton(f"میز {i}", callback_data=f"table_{i}")])
 
-    buttons.append([InlineKeyboardButton("میز PS", callback_data="table_ps")])
+    buttons.append([InlineKeyboardButton("PS", callback_data="table_ps")])
     buttons.append([InlineKeyboardButton("فرمون", callback_data="table_wheel")])
 
     return InlineKeyboardMarkup(buttons)
