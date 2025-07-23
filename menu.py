@@ -1,4 +1,4 @@
-from telegram import InlineKeyboardButton, InlineKeyboardMarkup
+from telegram import ReplyKeyboardMarkup, KeyboardButton
 import json
 
 CATEGORY_LABELS = {
@@ -17,26 +17,26 @@ CATEGORY_LABELS = {
 }
 
 def get_table_menu():
-    buttons = [[InlineKeyboardButton(f"میز {i}", callback_data=f"table_{i}")] for i in range(1, 17)]
+    buttons = [[KeyboardButton(f"میز {i}")] for i in range(1, 17)]
     buttons += [
-        [InlineKeyboardButton("میز آزاد", callback_data="table_free")],
-        [InlineKeyboardButton("PS", callback_data="table_ps")],
-        [InlineKeyboardButton("فرمون", callback_data="table_wheel")]
+        [KeyboardButton("میز آزاد")],
+        [KeyboardButton("PS")],
+        [KeyboardButton("فرمون")]
     ]
-    return InlineKeyboardMarkup(buttons)
+    buttons.append([KeyboardButton("بازگشت")])
+    return ReplyKeyboardMarkup(buttons, resize_keyboard=True)
 
 def get_category_menu():
-    return InlineKeyboardMarkup([
-        [InlineKeyboardButton(label, callback_data=f"cat_{key}")]
-        for key, label in CATEGORY_LABELS.items()
-    ])
+    buttons = [[KeyboardButton(label)] for label in CATEGORY_LABELS.values()]
+    buttons.append([KeyboardButton("بازگشت")])
+    return ReplyKeyboardMarkup(buttons, resize_keyboard=True)
 
 def get_item_menu_by_category(cat_key):
     with open("items.json", encoding="utf-8") as f:
         items = json.load(f)
-    buttons = [[InlineKeyboardButton(item, callback_data=f"item_{item}")] for item in items.get(cat_key, [])]
+    buttons = [[KeyboardButton(item)] for item in items.get(cat_key, [])]
     buttons.append([
-        InlineKeyboardButton("✅ پایان سفارش", callback_data="done_order"),
-        InlineKeyboardButton("↩ بازگشت به دسته‌ها", callback_data="back_to_categories")
+        KeyboardButton("✅ پایان سفارش"),
+        KeyboardButton("بازگشت")
     ])
-    return InlineKeyboardMarkup(buttons)
+    return ReplyKeyboardMarkup(buttons, resize_keyboard=True)
