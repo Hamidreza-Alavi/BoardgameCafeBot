@@ -73,12 +73,12 @@ async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
     uid = update.effective_user.id
     if uid not in ALLOWED_USER_IDS:
         return await update.message.reply_text("⛔ دسترسی ندارید.")
-    buttons = [
-        [KeyboardButton("🎲 شروع بازی")],
-        [KeyboardButton("☕ سفارش کافه")],
-        [KeyboardButton(✏️ ویرایش سفارش")],
-        [KeyboardButton("⏹️ پایان بازی")]
-    ]
+buttons = [
+    [KeyboardButton("🎲 شروع بازی")],
+    [KeyboardButton("☕ سفارش کافه")],
+    [KeyboardButton("✏️ ویرایش سفارش")],
+    [KeyboardButton("⏹️ پایان بازی")]
+]
     keyboard = ReplyKeyboardMarkup(buttons, resize_keyboard=True)
     user_states.pop(uid, None)
     await update.message.reply_text("گزینه‌ای را انتخاب کنید:", reply_markup=keyboard)
