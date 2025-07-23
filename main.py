@@ -36,14 +36,13 @@ def get_table_menu():
 
 def get_category_menu():
     buttons = [[KeyboardButton(label)] for label in CATEGORY_LABELS.values()]
-    buttons.append([KeyboardButton("ثبت سفارش")])
+    buttons.append([KeyboardButton("✅ثبت سفارش")])
     buttons.append([KeyboardButton("بازگشت")])
     return ReplyKeyboardMarkup(buttons, resize_keyboard=True)
 
 def get_items_by_category(cat_label):
     with open("items.json", encoding="utf-8") as f:
         items = json.load(f)
-    # پیدا کردن کلید دسته بر اساس مقدار label
     key = None
     for k, v in CATEGORY_LABELS.items():
         if v == cat_label:
@@ -78,13 +77,11 @@ async def handle_message(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
     state = user_states.get(uid, {})
 
-    # دکمه بازگشت
     if text == "بازگشت":
         user_states.pop(uid, None)
         await start(update, context)
         return
 
-    # منوی اصلی
     if text == "🎲 شروع بازی":
         user_states[uid] = {'mode': 'game'}
         await update.message.reply_text("کدام میز؟", reply_markup=get_table_menu())
@@ -96,11 +93,9 @@ async def handle_message(update: Update, context: ContextTypes.DEFAULT_TYPE):
         return
 
     if text == "✏️ ویرایش سفارش":
-        # برای مثال می‌تونی این بخش رو توسعه بدی
         await update.message.reply_text("این قابلیت هنوز آماده نیست.")
         return
 
-    # اگر انتخاب میز
     if text.startswith("میز"):
         if not state or 'mode' not in state:
             return await update.message.reply_text("لطفاً ابتدا یکی از گزینه‌های اصلی را انتخاب کنید.")
@@ -109,13 +104,12 @@ async def handle_message(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
         if state['mode'] == 'game':
             await update.message.reply_text("تعداد نفرات؟")
-        else:  # سفارش
+        else:
             state['items'] = []
             user_states[uid] = state
             await update.message.reply_text("دسته‌بندی را انتخاب کنید:", reply_markup=get_category_menu())
         return
 
-    # دسته بندی در حالت سفارش
     if state.get('mode') == 'order':
         if text == "ثبت سفارش":
             if 'items' not in state or not state['items']:
@@ -124,7 +118,7 @@ async def handle_message(update: Update, context: ContextTypes.DEFAULT_TYPE):
             table = state.get('table', 'میز نامشخص')
             username_or_name = update.effective_user.username or update.effective_user.first_name
             msg = (
-                f"📦 سفارش جدید:\n🪑 میز: {table}\n"
+                f"📦 سفارش جدید\n🪑 میز: {table}\n"
                 f"🍽 {items_str}\n👤 @{username_or_name}"
             )
             await context.bot.send_message(chat_id=CHANNEL_CHAT_ID, text=msg)
@@ -132,7 +126,6 @@ async def handle_message(update: Update, context: ContextTypes.DEFAULT_TYPE):
             user_states.pop(uid, None)
             return
 
-        # اگر دسته بندی انتخاب شده باشه
         if text in CATEGORY_LABELS.values():
             items = get_items_by_category(text)
             if not items:
@@ -142,7 +135,6 @@ async def handle_message(update: Update, context: ContextTypes.DEFAULT_TYPE):
                 await update.message.reply_text("آیتم را انتخاب کنید:", reply_markup=get_item_menu(items))
             return
 
-        # انتخاب آیتم
         if 'current_category' in state:
             items = get_items_by_category(state['current_category'])
             if text in items:
@@ -150,18 +142,17 @@ async def handle_message(update: Update, context: ContextTypes.DEFAULT_TYPE):
                 await update.message.reply_text(f"«{text}» اضافه شد.\nدسته‌بندی را انتخاب کنید:", reply_markup=get_category_menu())
                 return
 
-    # حالت بازی
     if state.get('mode') == 'game' and 'players' not in state:
         try:
             players = int(text)
             state['players'] = players
             user_states[uid] = state
 
-            now = datetime.now().strftime("%H:%M")  # فقط ساعت و دقیقه
+            now = datetime.now().strftime("%H:%M")
             table = state.get('table', 'میز نامشخص')
             username_or_name = update.effective_user.username or update.effective_user.first_name
             msg = (
-                f"🎲 شروع بازی:\n🪑 میز: {table}\n"
+                f"🎲 شروع بازی\n🪑 میز: {table}\n"
                 f"👥 تعداد نفرات: {players}\n⏰ زمان: {now}\n"
                 f"👤 @{username_or_name}"
             )
@@ -171,8 +162,6 @@ async def handle_message(update: Update, context: ContextTypes.DEFAULT_TYPE):
         except ValueError:
             await update.message.reply_text("لطفاً عدد وارد کنید.")
         return
-
-    # اگر چیزی نامشخص وارد شد
     await update.message.reply_text("لطفاً از منو استفاده کنید یا بازگشت بزنید.")
 
 def main():
