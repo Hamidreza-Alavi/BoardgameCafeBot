@@ -4,7 +4,6 @@ from telegram.ext import ApplicationBuilder, CommandHandler, CallbackQueryHandle
 from datetime import datetime
 from config import BOT_TOKEN, ALLOWED_USER_IDS, CHANNEL_CHAT_ID
 from menu import get_table_menu, get_category_menu, get_item_menu_by_category
-from db import init_db, add_table_if_not_exists, save_order, save_game
 
 user_states = {}
 logging.basicConfig(level=logging.INFO)
@@ -64,8 +63,6 @@ async def handle_menu(update: Update, context: ContextTypes.DEFAULT_TYPE):
         if not data_state or 'items' not in data_state:
             return await query.message.reply_text("❗ سفارشی ثبت نشده.")
         items = data_state['items']
-        # ذخیره سفارش در دیتابیس
-        save_order(uid, data_state['table'], items)
 
         items_str = "، ".join(items)
         msg = (
@@ -78,15 +75,13 @@ async def handle_menu(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
 async def handle_text(update: Update, context: ContextTypes.DEFAULT_TYPE):
     uid = update.effective_user.id
-    if uid not in user_states: 
+    if uid not in user_states:
         return
     state = user_states[uid]
     if state['mode'] == 'game' and 'players' not in state:
         try:
             players = int(update.message.text)
             state['players'] = players
-            # ذخیره بازی در دیتابیس
-            save_game(uid, state['table'], players)
 
             now = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
             msg = (
@@ -101,14 +96,6 @@ async def handle_text(update: Update, context: ContextTypes.DEFAULT_TYPE):
             await update.message.reply_text("لطفاً عدد وارد کنید.")
 
 def main():
-    init_db()
-    # مقداردهی اولیه میزها
-    for i in range(1, 17):
-        add_table_if_not_exists(f"میز {i}")
-    add_table_if_not_exists("میز آزاد")
-    add_table_if_not_exists("PS")
-    add_table_if_not_exists("فرمون")
-
     app = ApplicationBuilder().token(BOT_TOKEN).build()
     app.add_handler(CommandHandler("start", start))
     app.add_handler(CallbackQueryHandler(handle_menu))
