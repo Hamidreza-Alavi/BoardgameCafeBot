@@ -7,9 +7,9 @@ import json
 
 logging.basicConfig(level=logging.INFO)
 
-user_states = {}  # برای ذخیره وضعیت کاربر
-orders = {}       # key: میز، value: list آیتم‌ها
-games = {}        # key: میز، value: dict {players, start_time}
+user_states = {}
+orders = {}
+games = {}
 
 CATEGORY_LABELS = {
     "COFFEE_HOT": "☕ قهوه داغ",
@@ -27,7 +27,6 @@ CATEGORY_LABELS = {
 }
 
 def get_table_list():
-    # همه میزهای ممکن که در سفارش یا بازی استفاده شده اند (ترکیب keys از orders و games)
     all_tables = set(list(orders.keys()) + list(games.keys()))
     if not all_tables:
         return []
@@ -54,7 +53,6 @@ def get_category_menu():
 def get_items_by_category(cat_label):
     with open("items.json", encoding="utf-8") as f:
         items = json.load(f)
-    # پیدا کردن کلید دسته بر اساس مقدار label
     key = None
     for k, v in CATEGORY_LABELS.items():
         if v == cat_label:
@@ -73,12 +71,13 @@ async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
     uid = update.effective_user.id
     if uid not in ALLOWED_USER_IDS:
         return await update.message.reply_text("⛔ دسترسی ندارید.")
-buttons = [
-    [KeyboardButton("🎲 شروع بازی")],
-    [KeyboardButton("☕ سفارش کافه")],
-    [KeyboardButton("✏️ ویرایش سفارش")],
-    [KeyboardButton("⏹️ پایان بازی")]
-]
+    
+    buttons = [
+        [KeyboardButton("🎲 شروع بازی")],
+        [KeyboardButton("☕ سفارش کافه")],
+        [KeyboardButton("✏️ ویرایش سفارش")],
+        [KeyboardButton("⏹️ پایان بازی")]
+    ]
     keyboard = ReplyKeyboardMarkup(buttons, resize_keyboard=True)
     user_states.pop(uid, None)
     await update.message.reply_text("گزینه‌ای را انتخاب کنید:", reply_markup=keyboard)
