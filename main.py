@@ -1,195 +1,293 @@
 import json
 import logging
-from telegram import (
-    Update,
-    ReplyKeyboardMarkup,
-    KeyboardButton,
-)
-from telegram.ext import (
-    ApplicationBuilder,
-    CommandHandler,
-    MessageHandler,
-    ContextTypes,
-    filters,
-)
+import pytz
 from datetime import datetime
+from telegram import Update, ReplyKeyboardMarkup, KeyboardButton
+from telegram.ext import ApplicationBuilder, CommandHandler, MessageHandler, ContextTypes, filters
 from config import BOT_TOKEN, ALLOWED_USER_IDS, CHANNEL_CHAT_ID
 
-logging.basicConfig(level=logging.INFO)
+logging.basicConfig(
+    level=logging.INFO,
+    format='%(asctime)s - %(name)s - %(levelname)s - %(message)s'
+)
+logger = logging.getLogger(__name__)
 
-user_states = {}
-orders = {}  # ذخیره سفارش‌ها در حافظه
-games = {}   # ذخیره بازی‌ها در حافظه
+class CafeBot:
+    def __init__(self):
+        self.load_menu()
+        self.user_states = {}
+        self.category_labels = {
+            "COFFEE_HOT": "☕ قهوه داغ",
+            "COFFEE_COLD": "🧊 قهوه سرد",
+            "HOT_DRINKS_NON_COFFEE": "🍵 نوشیدنی داغ بدون قهوه",
+            "TEA": "🍃 چای",
+            "HERBAL_TEA": "🌿 دمنوش",
+            "MILKSHAKE": "🥤 میلک‌شیک",
+            "JUICE": "🍹 آب‌میوه",
+            "MOCKTAIL": "🍸 ماکتیل",
+            "ICE_CREAM": "🍨 بستنی",
+            "CAKE": "🍰 کیک",
+            "FOOD": "🍕 غذا",
+            "ADDITIVES": "🧂 افزودنی",
+            "WATER": "💧 آب"
+        }
 
-# بارگذاری دسته‌بندی‌ها و آیتم‌ها از فایل JSON
-with open("menu.json", encoding="utf-8") as f:
-    menu_data = json.load(f)
+    def load_menu(self):
+        try:
+            with open("items.json", encoding="utf-8") as f:
+                self.items = json.load(f)
+            logger.info("Menu loaded successfully")
+        except FileNotFoundError:
+            logger.error("items.json not found")
+            self.items = {}
+        except json.JSONDecodeError:
+            logger.error("Invalid JSON format in items.json")
+            self.items = {}
 
-CATEGORY_LABELS = menu_data.get("categories", {})
-ITEMS = menu_data.get("items", {})
+    def check_user_access(self, user_id: int) -> bool:
+        return user_id in ALLOWED_USER_IDS
 
-def get_table_menu():
-    buttons = [[KeyboardButton(f"میز {i}")] for i in range(1, 17)]
-    buttons += [[KeyboardButton(label)] for label in ("میز آزاد", "PS", "فرمون")]
-    buttons.append([KeyboardButton("بازگشت")])
-    return ReplyKeyboardMarkup(buttons, resize_keyboard=True)
+    def get_iran_time(self) -> str:
+        return datetime.now(pytz.timezone("Asia/Tehran")).strftime("%H:%M")
 
-def get_category_menu():
-    buttons = [[KeyboardButton(label)] for label in CATEGORY_LABELS.values()]
-    buttons.append([KeyboardButton("ثبت سفارش")])
-    buttons.append([KeyboardButton("بازگشت")])
-    return ReplyKeyboardMarkup(buttons, resize_keyboard=True)
+    def get_user_info(self, user) -> str:
+        return user.username or user.first_name or "ناشناس"
 
-def get_items_by_category(cat_label):
-    # پیدا کردن کلید دسته‌بندی از روی مقدار
-    key = None
-    for k, v in CATEGORY_LABELS.items():
-        if v == cat_label:
-            key = k
-            break
-    if key:
-        return ITEMS.get(key, [])
-    return []
+    def create_table_menu(self) -> ReplyKeyboardMarkup:
+        buttons = []
+        for i in range(1, 17, 4):
+            row = [KeyboardButton(f"میز {j}") for j in range(i, min(i+4, 17))]
+            buttons.append(row)
+        
+        buttons.extend([
+            [KeyboardButton("میز آزاد"), KeyboardButton("PS")],
+            [KeyboardButton("فرمون")],
+            [KeyboardButton("بازگشت")]
+        ])
+        
+        return ReplyKeyboardMarkup(buttons, resize_keyboard=True)
 
-def get_item_menu(items):
-    buttons = [[KeyboardButton(item)] for item in items]
-    buttons.append([KeyboardButton("بازگشت")])
-    return ReplyKeyboardMarkup(buttons, resize_keyboard=True)
+    def create_category_menu(self) -> ReplyKeyboardMarkup:
+        buttons = []
+        categories = list(self.category_labels.values())
+        
+        for i in range(0, len(categories), 2):
+            row = categories[i:i+2]
+            buttons.append([KeyboardButton(cat) for cat in row])
+        
+        buttons.extend([
+            [KeyboardButton("ثبت سفارش")],
+            [KeyboardButton("بازگشت")]
+        ])
+        
+        return ReplyKeyboardMarkup(buttons, resize_keyboard=True)
 
-async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    uid = update.effective_user.id
-    if uid not in ALLOWED_USER_IDS:
-        return await update.message.reply_text("⛔ دسترسی ندارید.")
-    buttons = [
-        [KeyboardButton("🎲 شروع بازی")],
-        [KeyboardButton("☕ سفارش کافه")],
-        [KeyboardButton("✏️ ویرایش سفارش")]
-    ]
-    keyboard = ReplyKeyboardMarkup(buttons, resize_keyboard=True)
-    await update.message.reply_text("گزینه‌ای را انتخاب کنید:", reply_markup=keyboard)
-    user_states.pop(uid, None)  # پاک کردن وضعیت قبلی
+    def create_items_menu(self, items: list) -> ReplyKeyboardMarkup:
+        buttons = []
+        
+        for i in range(0, len(items), 2):
+            row = items[i:i+2]
+            buttons.append([KeyboardButton(item) for item in row])
+        
+        buttons.append([KeyboardButton("بازگشت")])
+        return ReplyKeyboardMarkup(buttons, resize_keyboard=True)
 
-async def handle_message(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    uid = update.effective_user.id
-    text = update.message.text
-    if uid not in ALLOWED_USER_IDS:
-        return await update.message.reply_text("⛔ دسترسی ندارید.")
+    def get_items_by_category(self, category_label: str) -> list:
+        for key, label in self.category_labels.items():
+            if label == category_label:
+                return self.items.get(key, [])
+        return []
 
-    state = user_states.get(uid, {})
+    def clear_user_state(self, user_id: int):
+        self.user_states.pop(user_id, None)
 
-    if text == "بازگشت":
-        user_states.pop(uid, None)
-        await start(update, context)
-        return
+    async def start_command(self, update: Update, context: ContextTypes.DEFAULT_TYPE):
+        user_id = update.effective_user.id
+        
+        if not self.check_user_access(user_id):
+            await update.message.reply_text("⛔ دسترسی ندارید.")
+            return
 
-    if text == "🎲 شروع بازی":
-        user_states[uid] = {'mode': 'game_start'}
-        await update.message.reply_text("کدام میز؟", reply_markup=get_table_menu())
-        return
+        keyboard = ReplyKeyboardMarkup([
+            [KeyboardButton("🎲 شروع بازی")],
+            [KeyboardButton("☕ سفارش کافه")]
+        ], resize_keyboard=True)
 
-    if text == "☕ سفارش کافه":
-        user_states[uid] = {'mode': 'order_start'}
-        await update.message.reply_text("میز سفارش را انتخاب کنید:", reply_markup=get_table_menu())
-        return
+        self.clear_user_state(user_id)
+        await update.message.reply_text(
+            "🎮 خوش آمدید!\nگزینه‌ای را انتخاب کنید:", 
+            reply_markup=keyboard
+        )
 
-    if text == "✏️ ویرایش سفارش":
-        await update.message.reply_text("این قابلیت هنوز آماده نیست.")
-        return
-
-    # انتخاب میز
-    if text.startswith("میز") or text in ("میز آزاد", "PS", "فرمون"):
-        if not state or 'mode' not in state:
-            return await update.message.reply_text("لطفاً ابتدا یکی از گزینه‌های اصلی را انتخاب کنید.")
-        state['table'] = text
-        user_states[uid] = state
-
-        if state['mode'] == 'game_start':
-            await update.message.reply_text("تعداد نفرات؟")
-        elif state['mode'] == 'order_start':
-            state['items'] = []
-            user_states[uid] = state
-            await update.message.reply_text("دسته‌بندی را انتخاب کنید:", reply_markup=get_category_menu())
-        return
-
-    # ثبت تعداد نفرات بازی
-    if state.get('mode') == 'game_start' and 'players' not in state:
+    async def handle_game_flow(self, update: Update, context: ContextTypes.DEFAULT_TYPE, user_id: int, text: str, state: dict):
+        if 'table' not in state:
+            return await update.message.reply_text("لطفاً ابتدا میز را انتخاب کنید.")
+        
+        if 'players' in state:
+            return
+        
         try:
             players = int(text)
-            table = state.get('table')
-            games[table] = {'players': players}
-            username_or_name = update.effective_user.username or update.effective_user.first_name
-            now = datetime.now().strftime("%H:%M")
-            msg = (
+            if players <= 0:
+                raise ValueError("تعداد نفرات باید مثبت باشد")
+            
+            table = state['table']
+            iran_time = self.get_iran_time()
+            username = self.get_user_info(update.effective_user)
+            
+            message = (
                 f"🎲 شروع بازی\n"
                 f"🪑 میز: {table}\n"
                 f"👥 تعداد نفرات: {players}\n"
-                f"⏰ زمان: {now}\n"
-                f"👤 @{username_or_name}"
+                f"⏰ زمان: {iran_time}\n"
+                f"👤 @{username}"
             )
-            await context.bot.send_message(chat_id=CHANNEL_CHAT_ID, text=msg)
-            await update.message.reply_text("✅ بازی ثبت شد.")
-            user_states.pop(uid, None)
+            
+            await context.bot.send_message(chat_id=CHANNEL_CHAT_ID, text=message)
+            self.clear_user_state(user_id)
+            await update.message.reply_text("✅ بازی با موفقیت ثبت شد.")
+            
         except ValueError:
-            await update.message.reply_text("لطفاً عدد وارد کنید.")
-        return
+            await update.message.reply_text("❌ لطفاً یک عدد صحیح و مثبت وارد کنید.")
 
-    # ثبت سفارش - دسته بندی
-    if state.get('mode') == 'order_start':
-        if text in CATEGORY_LABELS.values():
-            user_states[uid]['current_category'] = text
-            items = get_items_by_category(text)
-            if not items:
-                await update.message.reply_text("آیتمی برای این دسته‌بندی یافت نشد.")
+    async def handle_order_flow(self, update: Update, context: ContextTypes.DEFAULT_TYPE, user_id: int, text: str, state: dict):
+        if text in self.category_labels.values():
+            items = self.get_items_by_category(text)
+            if items:
+                state['current_category'] = text
+                self.user_states[user_id] = state
+                await update.message.reply_text(
+                    f"📋 {text}\nآیتم مورد نظر را انتخاب کنید:",
+                    reply_markup=self.create_items_menu(items)
+                )
             else:
-                await update.message.reply_text("آیتم را انتخاب کنید:", reply_markup=get_item_menu(items))
-            return
+                await update.message.reply_text("⛔ آیتمی برای این دسته‌بندی موجود نیست.")
+                
         elif text == "ثبت سفارش":
-            items_list = state.get('items', [])
-            if not items_list:
-                await update.message.reply_text("❗ هیچ آیتمی انتخاب نشده است.")
-                return
-            table = state.get('table', 'میز نامشخص')
-            items_str = "، ".join(items_list)
-            username_or_name = update.effective_user.username or update.effective_user.first_name
-            msg = (
-                f"📦 سفارش جدید\n"
-                f"🪑 میز: {table}\n"
-                f"🍽 {items_str}\n"
-                f"👤 @{username_or_name}"
-            )
-            # ذخیره سفارش در حافظه (می‌تونی اینجا سفارش‌ها رو در دیتابیس ذخیره کنی)
-            orders[table] = items_list
-            await context.bot.send_message(chat_id=CHANNEL_CHAT_ID, text=msg)
-            await update.message.reply_text("✅ سفارش ارسال شد.")
-            user_states.pop(uid, None)
-            return
+            await self.submit_order(update, context, user_id, state)
+            
+        elif state.get("current_category"):
+            await self.add_item_to_order(update, user_id, text, state)
+            
         else:
-            await update.message.reply_text("لطفاً از منو استفاده کنید یا بازگشت بزنید.")
-            return
+            await update.message.reply_text("⛔ لطفاً از منو استفاده کنید.")
 
-    # ثبت سفارش - انتخاب آیتم
-    if state.get('mode') == 'order_start' and 'current_category' in state:
-        category = state['current_category']
-        items = get_items_by_category(category)
+    async def add_item_to_order(self, update: Update, user_id: int, text: str, state: dict):
+        items = self.get_items_by_category(state["current_category"])
+        
         if text in items:
-            user_states[uid].setdefault('items', []).append(text)
-            await update.message.reply_text(f"«{text}» اضافه شد.\nدسته‌بندی را انتخاب کنید:", reply_markup=get_category_menu())
-            return
-        elif text == "بازگشت":
-            user_states[uid].pop('current_category', None)
-            await update.message.reply_text("دسته‌بندی را انتخاب کنید:", reply_markup=get_category_menu())
-            return
+            state['items'].append(text)
+            state.pop('current_category', None)
+            self.user_states[user_id] = state
+            
+            items_count = len(state['items'])
+            await update.message.reply_text(
+                f"✅ «{text}» اضافه شد.\n"
+                f"📦 تعداد آیتم‌ها: {items_count}\n\n"
+                f"دسته‌بندی جدید را انتخاب کنید یا سفارش را ثبت کنید:",
+                reply_markup=self.create_category_menu()
+            )
         else:
-            await update.message.reply_text("لطفاً از منو استفاده کنید یا بازگشت بزنید.")
+            await update.message.reply_text("⛔ لطفاً از لیست آیتم‌ها انتخاب کنید.")
+
+    async def submit_order(self, update: Update, context: ContextTypes.DEFAULT_TYPE, user_id: int, state: dict):
+        table = state.get('table', 'نامشخص')
+        items_list = state.get('items', [])
+        
+        if not items_list:
+            await update.message.reply_text("❗ هیچ آیتمی انتخاب نشده است.")
+            return
+        
+        items_str = "، ".join(items_list)
+        username = self.get_user_info(update.effective_user)
+        iran_time = self.get_iran_time()
+        
+        message = (
+            f"📦 سفارش جدید\n"
+            f"🪑 میز: {table}\n"
+            f"🍽 آیتم‌ها ({len(items_list)}): {items_str}\n"
+            f"⏰ زمان: {iran_time}\n"
+            f"👤 @{username}"
+        )
+        
+        try:
+            await context.bot.send_message(chat_id=CHANNEL_CHAT_ID, text=message)
+            self.clear_user_state(user_id)
+            await update.message.reply_text("✅ سفارش با موفقیت ثبت شد.")
+        except Exception as e:
+            logger.error(f"Error sending order: {e}")
+            await update.message.reply_text("❌ خطا در ثبت سفارش. لطفاً دوباره تلاش کنید.")
+
+    async def handle_message(self, update: Update, context: ContextTypes.DEFAULT_TYPE):
+        user_id = update.effective_user.id
+        text = update.message.text.strip()
+        
+        if not self.check_user_access(user_id):
+            await update.message.reply_text("⛔ دسترسی ندارید.")
             return
 
-    await update.message.reply_text("لطفاً از منو استفاده کنید یا بازگشت بزنید.")
+        state = self.user_states.get(user_id, {})
+
+        if text == "بازگشت":
+            self.clear_user_state(user_id)
+            return await self.start_command(update, context)
+
+        if text == "🎲 شروع بازی":
+            self.user_states[user_id] = {'mode': 'game'}
+            await update.message.reply_text(
+                "🎮 میز بازی را انتخاب کنید:",
+                reply_markup=self.create_table_menu()
+            )
+            return
+
+        if text == "☕ سفارش کافه":
+            self.user_states[user_id] = {'mode': 'order', 'items': []}
+            await update.message.reply_text(
+                "🍽 میز سفارش را انتخاب کنید:",
+                reply_markup=self.create_table_menu()
+            )
+            return
+
+        if text.startswith("میز") or text in ("میز آزاد", "PS", "فرمون"):
+            if 'mode' not in state:
+                await update.message.reply_text("لطفاً ابتدا از منوی اصلی گزینه‌ای را انتخاب کنید.")
+                return
+            
+            state['table'] = text
+            self.user_states[user_id] = state
+            
+            if state['mode'] == 'game':
+                await update.message.reply_text("👥 تعداد بازیکنان را وارد کنید:")
+            else:
+                await update.message.reply_text(
+                    "📋 دسته‌بندی را انتخاب کنید:",
+                    reply_markup=self.create_category_menu()
+                )
+            return
+
+        if state.get('mode') == 'game' and 'table' in state and 'players' not in state:
+            await self.handle_game_flow(update, context, user_id, text, state)
+            return
+
+        if state.get('mode') == 'order':
+            await self.handle_order_flow(update, context, user_id, text, state)
+            return
+
+        await update.message.reply_text("⛔ لطفاً از منو استفاده کنید یا دکمه بازگشت را بزنید.")
 
 def main():
-    app = ApplicationBuilder().token(BOT_TOKEN).build()
-    app.add_handler(CommandHandler("start", start))
-    app.add_handler(MessageHandler(filters.TEXT & ~filters.COMMAND, handle_message))
-    app.run_polling()
+    try:
+        bot = CafeBot()
+        app = ApplicationBuilder().token(BOT_TOKEN).build()
+        
+        app.add_handler(CommandHandler("start", bot.start_command))
+        app.add_handler(MessageHandler(filters.TEXT & ~filters.COMMAND, bot.handle_message))
+        
+        logger.info("Bot started successfully")
+        app.run_polling(drop_pending_updates=True)
+        
+    except Exception as e:
+        logger.error(f"Failed to start bot: {e}")
 
 if __name__ == "__main__":
     main()
