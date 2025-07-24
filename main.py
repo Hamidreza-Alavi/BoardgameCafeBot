@@ -312,6 +312,8 @@ class CafeBot:
                         reply_markup=self.create_edit_order_menu(state['items'])
                     )
             elif text == "➕ افزودن آیتم جدید":
+                state['adding_item'] = True
+                self.user_states[user_id] = state
                 await update.message.reply_text(
                     "📋 دسته‌بندی را برای افزودن آیتم جدید انتخاب کنید:",
                     reply_markup=self.create_category_menu()
@@ -324,9 +326,24 @@ class CafeBot:
                     "❌ ویرایش لغو شد.",
                     reply_markup=self.create_main_menu()
                 )
-            elif text in self.category_labels.values():
-                # Handle adding new items during edit
-                await self.handle_order_flow(update, context, user_id, text, state)
+            elif text in self.category_labels.values() and state.get('adding_item'):
+                # Handle category selection during edit
+                items = self.get_items_by_category(text)
+                if items:
+                    state['current_category'] = text
+                    self.user_states[user_id] = state
+                    await update.message.reply_text(
+                        f"📋 {text}\nآیتم مورد نظر را انتخاب کنید:",
+                        reply_markup=self.create_items_menu(items)
+                    )
+                else:
+                    await update.message.reply_text("⛔ آیتمی برای این دسته‌بندی موجود نیست.")
+            elif text == "ثبت سفارش" and 'editing_table' in state:
+                # Handle direct submit during edit (shouldn't happen but just in case)
+                await update.message.reply_text(
+                    "✏️ در حال ویرایش هستید. از گزینه 'تایید تغییرات' استفاده کنید:",
+                    reply_markup=self.create_edit_order_menu(state['items'])
+                )
 
     async def add_item_to_order(self, update: Update, user_id: int, text: str, state: dict):
         items = self.get_items_by_category(state["current_category"])
@@ -334,6 +351,11 @@ class CafeBot:
         if text in items:
             state['items'].append(text)
             state.pop('current_category', None)
+            
+            # Remove adding_item flag if in edit mode
+            if 'adding_item' in state:
+                state.pop('adding_item', None)
+            
             self.user_states[user_id] = state
             
             items_count = len(state['items'])
@@ -547,8 +569,13 @@ class CafeBot:
             return
 
         if state.get('mode') == 'edit_order':
-            await self.handle_edit_order(update, context, user_id, text, state)
-            return
+            # Check if we're selecting items during edit
+            if state.get('current_category') and text not in self.category_labels.values():
+                await self.add_item_to_order(update, user_id, text, state)
+                return
+            else:
+                await self.handle_edit_order(update, context, user_id, text, state)
+                return
 
         await update.message.reply_text("⛔ لطفاً از منو استفاده کنید یا دکمه بازگشت را بزنید.")
 
