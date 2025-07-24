@@ -209,7 +209,10 @@ class CafeBot:
 
     async def handle_game_end(self, update: Update, context: ContextTypes.DEFAULT_TYPE, user_id: int, text: str, state: dict):
         if text == "هیچ میز فعالی موجود نیست":
-            await update.message.reply_text("❗ هیچ بازی فعالی برای پایان دادن موجود نیست.")
+            await update.message.reply_text(
+                "❗ هیچ بازی فعالی برای پایان دادن موجود نیست.",
+                reply_markup=self.create_main_menu()
+            )
             return
 
         if text in self.active_games:
@@ -226,18 +229,28 @@ class CafeBot:
                 f"👤 پایان دهنده: @{username}"
             )
             
-            await context.bot.send_message(chat_id=CHANNEL_CHAT_ID, text=message)
-            
-            # Remove from active games
-            del self.active_games[text]
-            self.clear_user_state(user_id)
-            
-            await update.message.reply_text(
-                "✅ پایان بازی با موفقیت ثبت شد.",
-                reply_markup=self.create_main_menu()
-            )
+            try:
+                await context.bot.send_message(chat_id=CHANNEL_CHAT_ID, text=message)
+                
+                # Remove from active games
+                del self.active_games[text]
+                self.clear_user_state(user_id)
+                
+                await update.message.reply_text(
+                    "✅ پایان بازی با موفقیت ثبت شد.",
+                    reply_markup=self.create_main_menu()
+                )
+            except Exception as e:
+                logger.error(f"Error sending game end message: {e}")
+                await update.message.reply_text(
+                    "❌ خطا در ثبت پایان بازی. لطفاً دوباره تلاش کنید.",
+                    reply_markup=self.create_main_menu()
+                )
         else:
-            await update.message.reply_text("❌ میز انتخابی معتبر نیست.")
+            await update.message.reply_text(
+                "❌ میز انتخابی معتبر نیست یا بازی فعالی ندارد.",
+                reply_markup=self.create_active_tables_menu("game")
+            )
 
     async def handle_order_flow(self, update: Update, context: ContextTypes.DEFAULT_TYPE, user_id: int, text: str, state: dict):
         if text in self.category_labels.values():
@@ -539,17 +552,31 @@ class CafeBot:
                 await update.message.reply_text("لطفاً ابتدا از منوی اصلی گزینه‌ای را انتخاب کنید.")
                 return
             
-            state['table'] = text
-            self.user_states[user_id] = state
-            
+            # Handle different modes based on table selection
             if state['mode'] == 'game':
+                state['table'] = text
+                self.user_states[user_id] = state
                 await update.message.reply_text("👥 تعداد بازیکنان را وارد کنید:")
-            else:
+                return
+            elif state['mode'] == 'game_end':
+                # Handle game end directly - don't set table in state
+                await self.handle_game_end(update, context, user_id, text, state)
+                return
+            elif state['mode'] in ['order', 'add_to_order']:
+                state['table'] = text
+                self.user_states[user_id] = state
                 await update.message.reply_text(
                     "📋 دسته‌بندی را انتخاب کنید:",
                     reply_markup=self.create_category_menu()
                 )
-            return
+                return
+            elif state['mode'] in ['edit_order']:
+                # Handle edit order directly - don't set table in state
+                await self.handle_edit_order(update, context, user_id, text, state)
+                return
+            else:
+                await update.message.reply_text("⛔ حالت نامعتبر.")
+                return
 
         # Handle different modes
         if state.get('mode') == 'game' and 'table' in state and 'players' not in state:
@@ -557,7 +584,11 @@ class CafeBot:
             return
 
         if state.get('mode') == 'game_end':
-            await self.handle_game_end(update, context, user_id, text, state)
+            # Game end should be handled above in table selection
+            await update.message.reply_text(
+                "🏁 لطفاً میز بازی را برای پایان انتخاب کنید:",
+                reply_markup=self.create_active_tables_menu("game")
+            )
             return
 
         if state.get('mode') == 'order':
@@ -574,7 +605,11 @@ class CafeBot:
                 await self.add_item_to_order(update, user_id, text, state)
                 return
             else:
-                await self.handle_edit_order(update, context, user_id, text, state)
+                # Edit order should be handled above in table selection
+                await update.message.reply_text(
+                    "✏️ لطفاً میز سفارش را برای ویرایش انتخاب کنید:",
+                    reply_markup=self.create_active_tables_menu("order")
+                )
                 return
 
         await update.message.reply_text("⛔ لطفاً از منو استفاده کنید یا دکمه بازگشت را بزنید.")
