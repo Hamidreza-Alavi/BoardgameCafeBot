@@ -1,8 +1,4 @@
-def get_items_by_category(self, category_label: str) -> list:
-        for key, label in self.category_labels.items():
-            if label == category_label:
-                return self.items.get(key, [])
-        return []import json
+import json
 import logging
 import pytz
 from datetime import datetime
@@ -74,31 +70,42 @@ class CafeBot:
         return ReplyKeyboardMarkup(buttons, resize_keyboard=True)
 
     def create_table_menu(self, exclude_active=False) -> ReplyKeyboardMarkup:
-        buttons = []
-        for i in range(1, 17, 4):
-            row = []
-            for j in range(i, min(i+4, 17)):
-                table_name = f"میز {j}"
-                if exclude_active and self.is_table_occupied(table_name):
-                    row.append(KeyboardButton(f"🔒 {table_name}"))
+        try:
+            buttons = []
+            for i in range(1, 17, 4):
+                row = []
+                for j in range(i, min(i+4, 17)):
+                    table_name = f"میز {j}"
+                    if exclude_active and self.is_table_occupied(table_name):
+                        row.append(KeyboardButton(f"🔒 {table_name}"))
+                    else:
+                        row.append(KeyboardButton(table_name))
+                buttons.append(row)
+            
+            # Handle special tables
+            special_tables = ["میز آزاد", "PS", "فرمون"]
+            special_row = []
+            for table in special_tables:
+                if exclude_active and self.is_table_occupied(table):
+                    special_row.append(KeyboardButton(f"🔒 {table}"))
                 else:
-                    row.append(KeyboardButton(table_name))
-            buttons.append(row)
-        
-        # Handle special tables
-        special_tables = ["میز آزاد", "PS", "فرمون"]
-        special_row = []
-        for table in special_tables:
-            if exclude_active and self.is_table_occupied(table):
-                special_row.append(KeyboardButton(f"🔒 {table}"))
-            else:
-                special_row.append(KeyboardButton(table))
-        
-        buttons.append(special_row[:2])  # میز آزاد, PS
-        buttons.append([special_row[2]])  # فرمون
-        buttons.append([KeyboardButton("بازگشت")])
-        
-        return ReplyKeyboardMarkup(buttons, resize_keyboard=True)
+                    special_row.append(KeyboardButton(table))
+            
+            buttons.append(special_row[:2])  # میز آزاد, PS
+            buttons.append([special_row[2]])  # فرمون
+            buttons.append([KeyboardButton("بازگشت")])
+            
+            return ReplyKeyboardMarkup(buttons, resize_keyboard=True)
+        except Exception as e:
+            logger.error(f"Error creating table menu: {e}")
+            # Fallback to simple menu
+            buttons = [
+                [KeyboardButton("میز 1"), KeyboardButton("میز 2"), KeyboardButton("میز 3"), KeyboardButton("میز 4")],
+                [KeyboardButton("میز آزاد"), KeyboardButton("PS")],
+                [KeyboardButton("فرمون")],
+                [KeyboardButton("بازگشت")]
+            ]
+            return ReplyKeyboardMarkup(buttons, resize_keyboard=True)
 
     def create_active_tables_menu(self, table_type: str) -> ReplyKeyboardMarkup:
         """Create menu showing only tables with active orders/games"""
@@ -149,7 +156,7 @@ class CafeBot:
         """Create menu for editing existing order items"""
         buttons = []
         
-        for i, item in enumerate(items, 1):
+        for item in items:
             buttons.append([KeyboardButton(f"حذف: {item}")])
         
         buttons.extend([
@@ -162,19 +169,30 @@ class CafeBot:
 
     def is_table_occupied(self, table_name: str) -> bool:
         """Check if a table is currently occupied by a game or has an active order"""
-        return table_name in self.active_games or table_name in self.active_orders
+        try:
+            return table_name in self.active_games or table_name in self.active_orders
+        except Exception as e:
+            logger.error(f"Error checking table occupation: {e}")
+            return False
 
     def get_table_status(self, table_name: str) -> str:
         """Get the current status of a table"""
-        if table_name in self.active_games:
-            game_info = self.active_games[table_name]
-            return f"🎲 در حال بازی ({game_info['players']} نفر) - شروع: {game_info['start_time']}"
-        elif table_name in self.active_orders:
-            order_info = self.active_orders[table_name]
-            items_count = len(order_info['items'])
-            return f"☕ سفارش فعال ({items_count} آیتم) - آخرین بروزرسانی: {order_info['last_update']}"
-        else:
-            return "🟢 آزاد"
+        try:
+            if table_name in self.active_games:
+                game_info = self.active_games[table_name]
+                return f"🎲 در حال بازی ({game_info.get('players', '?')} نفر) - شروع: {game_info.get('start_time', '?')}"
+            elif table_name in self.active_orders:
+                order_info = self.active_orders[table_name]
+                items_count = len(order_info.get('items', []))
+                return f"☕ سفارش فعال ({items_count} آیتم) - آخرین بروزرسانی: {order_info.get('last_update', '?')}"
+            else:
+                return "🟢 آزاد"
+        except Exception as e:
+            logger.error(f"Error getting table status: {e}")
+            return "❓ نامشخص"
+
+    def get_items_by_category(self, category_label: str) -> list:
+        """Get items by category label"""
         for key, label in self.category_labels.items():
             if label == category_label:
                 return self.items.get(key, [])
@@ -465,7 +483,7 @@ class CafeBot:
             
             self.clear_user_state(user_id)
             success_message = "✅ سفارش با موفقیت ثبت شد."
-            if not 'selected_table' in state:
+            if 'selected_table' not in state:
                 success_message += f"\n🔒 میز «{table}» اکنون اشغال است."
             
             await update.message.reply_text(
@@ -521,173 +539,192 @@ class CafeBot:
             await update.message.reply_text("❌ خطا در ویرایش سفارش. لطفاً دوباره تلاش کنید.")
 
     async def handle_message(self, update: Update, context: ContextTypes.DEFAULT_TYPE):
-        user_id = update.effective_user.id
-        text = update.message.text.strip()
-        
-        if not self.check_user_access(user_id):
-            await update.message.reply_text("⛔ دسترسی ندارید.")
-            return
-
-        state = self.user_states.get(user_id, {})
-
-        if text == "بازگشت":
-            self.clear_user_state(user_id)
-            return await self.start_command(update, context)
-
-        # Main menu options
-        if text == "🎲 شروع بازی":
-            self.user_states[user_id] = {'mode': 'game'}
-            await update.message.reply_text(
-                "🎮 میز بازی را انتخاب کنید:\n"
-                "🔒 = میز اشغال",
-                reply_markup=self.create_table_menu(exclude_active=True)
-            )
-            return
-
-        if text == "🏁 پایان بازی":
-            self.user_states[user_id] = {'mode': 'game_end'}
-            await update.message.reply_text(
-                "🏁 میز بازی را برای پایان انتخاب کنید:",
-                reply_markup=self.create_active_tables_menu("game")
-            )
-            return
-
-        if text == "☕ سفارش کافه":
-            self.user_states[user_id] = {'mode': 'order', 'items': []}
-            await update.message.reply_text(
-                "🍽 میز سفارش را انتخاب کنید:\n"
-                "🔒 = میز اشغال",
-                reply_markup=self.create_table_menu(exclude_active=True)
-            )
-            return
-
-        if text == "📝 مدیریت سفارش":
-            await update.message.reply_text(
-                "📝 عملیات مورد نظر را انتخاب کنید:",
-                reply_markup=self.create_order_management_menu()
-            )
-            return
-
-        if text == "➕ افزودن به سفارش":
-            self.user_states[user_id] = {'mode': 'add_to_order'}
-            await update.message.reply_text(
-                "➕ میز سفارش را برای افزودن انتخاب کنید:",
-                reply_markup=self.create_active_tables_menu("order")
-            )
-            return
-
-        if text == "✏️ ویرایش سفارش":
-            self.user_states[user_id] = {'mode': 'edit_order'}
-            await update.message.reply_text(
-                "✏️ میز سفارش را برای ویرایش انتخاب کنید:",
-                reply_markup=self.create_active_tables_menu("order")
-            )
-            return
-
-        # Table selection
-        if text.startswith("میز") or text in ("میز آزاد", "PS", "فرمون"):
-            # Remove lock emoji if present
-            clean_table_name = text.replace("🔒 ", "")
+        try:
+            user_id = update.effective_user.id
+            text = update.message.text.strip()
             
-            if 'mode' not in state:
-                await update.message.reply_text("لطفاً ابتدا از منوی اصلی گزینه‌ای را انتخاب کنید.")
+            if not self.check_user_access(user_id):
+                await update.message.reply_text("⛔ دسترسی ندارید.")
                 return
-            
-            # Check if table is locked (occupied) for new games/orders
-            if text.startswith("🔒") and state['mode'] in ['game', 'order']:
-                table_status = self.get_table_status(clean_table_name)
+
+            state = self.user_states.get(user_id, {})
+
+            if text == "بازگشت":
+                self.clear_user_state(user_id)
+                return await self.start_command(update, context)
+
+            # Main menu options
+            if text == "🎲 شروع بازی":
+                self.user_states[user_id] = {'mode': 'game'}
                 await update.message.reply_text(
-                    f"❌ میز «{clean_table_name}» اشغال است!\n"
-                    f"📊 وضعیت: {table_status}\n\n"
-                    f"لطفاً میز دیگری انتخاب کنید.",
+                    "🎮 میز بازی را انتخاب کنید:\n"
+                    "🔒 = میز اشغال",
                     reply_markup=self.create_table_menu(exclude_active=True)
                 )
                 return
-            
-            # Handle different modes based on table selection
-            if state['mode'] == 'game':
-                if self.is_table_occupied(clean_table_name):
-                    table_status = self.get_table_status(clean_table_name)
-                    await update.message.reply_text(
-                        f"❌ میز «{clean_table_name}» اشغال است!\n"
-                        f"📊 وضعیت: {table_status}\n\n"
-                        f"لطفاً میز دیگری انتخاب کنید.",
-                        reply_markup=self.create_table_menu(exclude_active=True)
-                    )
-                    return
-                
-                state['table'] = clean_table_name
-                self.user_states[user_id] = state
-                await update.message.reply_text("👥 تعداد بازیکنان را وارد کنید:")
-                return
-            elif state['mode'] == 'game_end':
-                # Handle game end directly - don't set table in state
-                await self.handle_game_end(update, context, user_id, clean_table_name, state)
-                return
-            elif state['mode'] in ['order']:
-                if self.is_table_occupied(clean_table_name):
-                    table_status = self.get_table_status(clean_table_name)
-                    await update.message.reply_text(
-                        f"❌ میز «{clean_table_name}» اشغال است!\n"
-                        f"📊 وضعیت: {table_status}\n\n"
-                        f"لطفاً میز دیگری انتخاب کنید.",
-                        reply_markup=self.create_table_menu(exclude_active=True)
-                    )
-                    return
-                
-                state['table'] = clean_table_name
-                self.user_states[user_id] = state
+
+            if text == "🏁 پایان بازی":
+                self.user_states[user_id] = {'mode': 'game_end'}
                 await update.message.reply_text(
-                    "📋 دسته‌بندی را انتخاب کنید:",
-                    reply_markup=self.create_category_menu()
+                    "🏁 میز بازی را برای پایان انتخاب کنید:",
+                    reply_markup=self.create_active_tables_menu("game")
                 )
                 return
-            elif state['mode'] in ['add_to_order']:
-                await self.handle_add_to_order(update, context, user_id, clean_table_name, state)
-                return
-            elif state['mode'] in ['edit_order']:
-                # Handle edit order directly - don't set table in state
-                await self.handle_edit_order(update, context, user_id, clean_table_name, state)
-                return
-            else:
-                await update.message.reply_text("⛔ حالت نامعتبر.")
-                return
 
-        # Handle different modes
-        if state.get('mode') == 'game' and 'table' in state and 'players' not in state:
-            await self.handle_game_flow(update, context, user_id, text, state)
-            return
-
-        if state.get('mode') == 'game_end':
-            # Game end should be handled above in table selection
-            await update.message.reply_text(
-                "🏁 لطفاً میز بازی را برای پایان انتخاب کنید:",
-                reply_markup=self.create_active_tables_menu("game")
-            )
-            return
-
-        if state.get('mode') == 'order':
-            await self.handle_order_flow(update, context, user_id, text, state)
-            return
-
-        if state.get('mode') == 'add_to_order':
-            await self.handle_add_to_order(update, context, user_id, text, state)
-            return
-
-        if state.get('mode') == 'edit_order':
-            # Check if we're selecting items during edit
-            if state.get('current_category') and text not in self.category_labels.values():
-                await self.add_item_to_order(update, user_id, text, state)
-                return
-            else:
-                # Edit order should be handled above in table selection
+            if text == "☕ سفارش کافه":
+                self.user_states[user_id] = {'mode': 'order', 'items': []}
                 await update.message.reply_text(
-                    "✏️ لطفاً میز سفارش را برای ویرایش انتخاب کنید:",
+                    "🍽 میز سفارش را انتخاب کنید:\n"
+                    "🔒 = میز اشغال",
+                    reply_markup=self.create_table_menu(exclude_active=True)
+                )
+                return
+
+            if text == "📝 مدیریت سفارش":
+                await update.message.reply_text(
+                    "📝 عملیات مورد نظر را انتخاب کنید:",
+                    reply_markup=self.create_order_management_menu()
+                )
+                return
+
+            if text == "➕ افزودن به سفارش":
+                self.user_states[user_id] = {'mode': 'add_to_order'}
+                await update.message.reply_text(
+                    "➕ میز سفارش را برای افزودن انتخاب کنید:",
                     reply_markup=self.create_active_tables_menu("order")
                 )
                 return
 
-        await update.message.reply_text("⛔ لطفاً از منو استفاده کنید یا دکمه بازگشت را بزنید.")
+            if text == "✏️ ویرایش سفارش":
+                self.user_states[user_id] = {'mode': 'edit_order'}
+                await update.message.reply_text(
+                    "✏️ میز سفارش را برای ویرایش انتخاب کنید:",
+                    reply_markup=self.create_active_tables_menu("order")
+                )
+                return
+
+            # Table selection
+            if text.startswith("میز") or text in ("میز آزاد", "PS", "فرمون"):
+                try:
+                    # Remove lock emoji if present
+                    clean_table_name = text.replace("🔒 ", "")
+                    
+                    if 'mode' not in state:
+                        await update.message.reply_text("لطفاً ابتدا از منوی اصلی گزینه‌ای را انتخاب کنید.")
+                        return
+                    
+                    # Check if table is locked (occupied) for new games/orders
+                    if text.startswith("🔒") and state['mode'] in ['game', 'order']:
+                        table_status = self.get_table_status(clean_table_name)
+                        await update.message.reply_text(
+                            f"❌ میز «{clean_table_name}» اشغال است!\n"
+                            f"📊 وضعیت: {table_status}\n\n"
+                            f"لطفاً میز دیگری انتخاب کنید.",
+                            reply_markup=self.create_table_menu(exclude_active=True)
+                        )
+                        return
+                    
+                    # Handle different modes based on table selection
+                    if state['mode'] == 'game':
+                        if self.is_table_occupied(clean_table_name):
+                            table_status = self.get_table_status(clean_table_name)
+                            await update.message.reply_text(
+                                f"❌ میز «{clean_table_name}» اشغال است!\n"
+                                f"📊 وضعیت: {table_status}\n\n"
+                                f"لطفاً میز دیگری انتخاب کنید.",
+                                reply_markup=self.create_table_menu(exclude_active=True)
+                            )
+                            return
+                        
+                        state['table'] = clean_table_name
+                        self.user_states[user_id] = state
+                        await update.message.reply_text("👥 تعداد بازیکنان را وارد کنید:")
+                        return
+                        
+                    elif state['mode'] == 'game_end':
+                        await self.handle_game_end(update, context, user_id, clean_table_name, state)
+                        return
+                        
+                    elif state['mode'] == 'order':
+                        if self.is_table_occupied(clean_table_name):
+                            table_status = self.get_table_status(clean_table_name)
+                            await update.message.reply_text(
+                                f"❌ میز «{clean_table_name}» اشغال است!\n"
+                                f"📊 وضعیت: {table_status}\n\n"
+                                f"لطفاً میز دیگری انتخاب کنید.",
+                                reply_markup=self.create_table_menu(exclude_active=True)
+                            )
+                            return
+                        
+                        state['table'] = clean_table_name
+                        self.user_states[user_id] = state
+                        await update.message.reply_text(
+                            "📋 دسته‌بندی را انتخاب کنید:",
+                            reply_markup=self.create_category_menu()
+                        )
+                        return
+                        
+                    elif state['mode'] == 'add_to_order':
+                        await self.handle_add_to_order(update, context, user_id, clean_table_name, state)
+                        return
+                        
+                    elif state['mode'] == 'edit_order':
+                        await self.handle_edit_order(update, context, user_id, clean_table_name, state)
+                        return
+                        
+                    else:
+                        await update.message.reply_text("⛔ حالت نامعتبر.")
+                        return
+                        
+                except Exception as e:
+                    logger.error(f"Error handling table selection: {e}")
+                    await update.message.reply_text(
+                        "❌ خطا در پردازش انتخاب میز. لطفاً دوباره تلاش کنید.",
+                        reply_markup=self.create_main_menu()
+                    )
+                    return
+
+            # Handle different modes
+            if state.get('mode') == 'game' and 'table' in state and 'players' not in state:
+                await self.handle_game_flow(update, context, user_id, text, state)
+                return
+
+            if state.get('mode') == 'game_end':
+                await update.message.reply_text(
+                    "🏁 لطفاً میز بازی را برای پایان انتخاب کنید:",
+                    reply_markup=self.create_active_tables_menu("game")
+                )
+                return
+
+            if state.get('mode') == 'order':
+                await self.handle_order_flow(update, context, user_id, text, state)
+                return
+
+            if state.get('mode') == 'add_to_order':
+                await self.handle_add_to_order(update, context, user_id, text, state)
+                return
+
+            if state.get('mode') == 'edit_order':
+                # Check if we're selecting items during edit
+                if state.get('current_category') and text not in self.category_labels.values():
+                    await self.add_item_to_order(update, user_id, text, state)
+                    return
+                else:
+                    await self.handle_edit_order(update, context, user_id, text, state)
+                    return
+
+            await update.message.reply_text("⛔ لطفاً از منو استفاده کنید یا دکمه بازگشت را بزنید.")
+            
+        except Exception as e:
+            logger.error(f"Critical error in handle_message: {e}")
+            try:
+                await update.message.reply_text(
+                    "❌ خطای غیرمنتظره رخ داد. لطفاً /start را بزنید.",
+                    reply_markup=self.create_main_menu()
+                )
+            except:
+                pass  # If even this fails, just log it
+
 
 def main():
     try:
@@ -702,6 +739,7 @@ def main():
         
     except Exception as e:
         logger.error(f"Failed to start bot: {e}")
+
 
 if __name__ == "__main__":
     main()
