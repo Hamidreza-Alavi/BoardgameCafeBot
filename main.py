@@ -219,10 +219,31 @@ class CafeBot:
             return "❓ نامشخص"
 
     def get_items_by_category(self, category_label: str) -> list:
+        """
+        بازگردادن لیست نام آیتم‌ها بدون قیمت برای نمایش در منو
+        """
         for key, label in self.category_labels.items():
             if label == category_label:
-                return self.items.get(key, [])
+                items_data = self.items.get(key, [])
+                # اگر آیتم‌ها dictionary هستند، فقط نام را برمی‌گردانیم
+                if items_data and isinstance(items_data[0], dict):
+                    return [item["name"] for item in items_data]
+                # اگر آیتم‌ها string هستند، همان‌طور که هستند برمی‌گردانیم
+                else:
+                    return items_data
         return []
+
+    def get_item_price(self, category_label: str, item_name: str) -> int:
+        """
+        بازگردانی قیمت یک آیتم خاص (برای استفاده آینده)
+        """
+        for key, label in self.category_labels.items():
+            if label == category_label:
+                items_data = self.items.get(key, [])
+                for item in items_data:
+                    if isinstance(item, dict) and item["name"] == item_name:
+                        return item["price"]
+        return 0
 
     def clear_user_state(self, user_id: int):
         self.user_states.pop(user_id, None)
