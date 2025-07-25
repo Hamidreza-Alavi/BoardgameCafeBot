@@ -59,7 +59,7 @@ class CafeBot:
         buttons = [
             [KeyboardButton("🎲 شروع بازی"), KeyboardButton("🏁 پایان بازی")],
             [KeyboardButton("👥 مدیریت بازیکنان"), KeyboardButton("☕ سفارش کافه")],
-            [KeyboardButton("📝 مدیریت سفارش")]
+            [KeyboardButton("📝 مدیریت سفارش"), KeyboardButton("🔄 جابه‌جایی میز")]
         ]
         return ReplyKeyboardMarkup(buttons, resize_keyboard=True)
 
@@ -73,6 +73,13 @@ class CafeBot:
     def create_order_management_menu(self) -> ReplyKeyboardMarkup:
         buttons = [
             [KeyboardButton("➕ افزودن به سفارش"), KeyboardButton("✏️ ویرایش سفارش")],
+            [KeyboardButton("بازگشت")]
+        ]
+        return ReplyKeyboardMarkup(buttons, resize_keyboard=True)
+
+    def create_move_table_menu(self) -> ReplyKeyboardMarkup:
+        buttons = [
+            [KeyboardButton("انتخاب میز مبدأ"), KeyboardButton("انتخاب میز مقصد")],
             [KeyboardButton("بازگشت")]
         ]
         return ReplyKeyboardMarkup(buttons, resize_keyboard=True)
@@ -121,6 +128,8 @@ class CafeBot:
             active_tables = list(self.active_orders.keys())
         elif table_type == "game":
             active_tables = list(self.active_games.keys())
+        elif table_type == "both":
+            active_tables = list(set(list(self.active_orders.keys()) + list(self.active_games.keys())))
         
         if not active_tables:
             buttons.append([KeyboardButton("هیچ میز فعالی موجود نیست")])
@@ -739,6 +748,131 @@ class CafeBot:
             logger.error(f"Error updating order: {e}")
             await update.message.reply_text("❌ خطا در ویرایش سفارش. لطفاً دوباره تلاش کنید.")
 
+    async def handle_move_table(self, update: Update, context: ContextTypes.DEFAULT_TYPE, user_id: int, text: str, state: dict):
+        if text == "🔄 جابه‌جایی میز":
+            self.user_states[user_id] = {'mode': 'move_table'}
+            await update.message.reply_text(
+                "🔄 فرآیند جابه‌جایی میز\nلطفاً عملیات مورد نظر را انتخاب کنید:",
+                reply_markup=self.create_move_table_menu()
+            )
+            return
+        
+        if text == "انتخاب میز مبدأ":
+            state['move_step'] = 'select_source'
+            self.user_states[user_id] = state
+            await update.message.reply_text(
+                "میز مبدأ (منبع) را انتخاب کنید:",
+                reply_markup=self.create_active_tables_menu("both")
+            )
+            return
+            
+        if text == "انتخاب میز مقصد":
+            state['move_step'] = 'select_target'
+            self.user_states[user_id] = state
+            await update.message.reply_text(
+                "میز مقصد را انتخاب کنید:",
+                reply_markup=self.create_table_menu(lock_for_games=True)
+            )
+            return
+            
+        if 'move_step' in state and (text.startswith("میز") or text in ("میز آزاد", "PS", "فرمون")):
+            clean_table_name = text.replace("🔒 ", "")
+            
+            if state['move_step'] == 'select_source':
+                # بررسی وجود میز مبدأ
+                if clean_table_name not in self.active_games and clean_table_name not in self.active_orders:
+                    await update.message.reply_text("❌ میز انتخابی هیچ فعالیت فعالی ندارد!")
+                    return
+                    
+                state['source_table'] = clean_table_name
+                state['move_step'] = 'select_target'
+                self.user_states[user_id] = state
+                await update.message.reply_text(
+                    f"میز مبدأ: {clean_table_name}\n"
+                    "حالا میز مقصد را انتخاب کنید:",
+                    reply_markup=self.create_table_menu(lock_for_games=True)
+                )
+                return
+                
+            elif state['move_step'] == 'select_target':
+                if 'source_table' not in state:
+                    await update.message.reply_text("❌ لطفاً ابتدا میز مبدأ را انتخاب کنید.")
+                    return
+                    
+                source_table = state['source_table']
+                
+                # بررسی میز مقصد
+                if clean_table_name == source_table:
+                    await update.message.reply_text("❌ میز مبدأ و مقصد نمی‌توانند یکسان باشند!")
+                    return
+                    
+                if self.is_game_active_on_table(clean_table_name):
+                    await update.message.reply_text("❌ میز مقصد در حال حاضر بازی فعال دارد!")
+                    return
+                    
+                # انجام جابه‌جایی
+                await self.process_table_move(update, context, user_id, source_table, clean_table_name)
+                return
+                
+        await update.message.reply_text("⛔ لطفاً از منو استفاده کنید.")
+
+    async def process_table_move(self, update: Update, context: ContextTypes.DEFAULT_TYPE, user_id: int, source_table: str, target_table: str):
+        username = self.get_user_info(update.effective_user)
+        iran_time = self.get_iran_time()
+        
+        # جمع‌آوری اطلاعات قبل از جابه‌جایی
+        had_game = source_table in self.active_games
+        had_order = source_table in self.active_orders
+        
+        # انجام جابه‌جایی
+        if had_game:
+            self.active_games[target_table] = self.active_games.pop(source_table)
+            game_info = self.active_games[target_table]
+            player_display = self.format_player_history(game_info['player_groups'])
+            
+        if had_order:
+            self.active_orders[target_table] = self.active_orders.pop(source_table)
+            order_info = self.active_orders[target_table]
+            items_count = len(order_info.get('items', []))
+        
+        # ارسال پیام به کانال
+        message = (
+            f"🔄 جابه‌جایی میز\n"
+            f"➖➖➖➖➖➖➖➖\n"
+            f"🔀 از میز {source_table} به میز {target_table}\n"
+        )
+        
+        if had_game:
+            message += (
+                f"🎲 بازی منتقل شده: {player_display} نفر\n"
+            )
+            
+        if had_order:
+            message += (
+                f"☕ سفارش منتقل شده: {items_count} آیتم\n"
+            )
+            
+        message += (
+            f"⏰ زمان: {iran_time}\n"
+            f"👤 @{username}"
+        )
+        
+        try:
+            await context.bot.send_message(chat_id=CHANNEL_CHAT_ID, text=message)
+            
+            self.clear_user_state(user_id)
+            await update.message.reply_text(
+                f"✅ جابه‌جایی میز با موفقیت انجام شد.\n"
+                f"میز {source_table} آزاد شد و میز {target_table} قفل شد.",
+                reply_markup=self.create_main_menu()
+            )
+        except Exception as e:
+            logger.error(f"Error in table move: {e}")
+            await update.message.reply_text(
+                "❌ خطا در انجام جابه‌جایی. لطفاً دوباره تلاش کنید.",
+                reply_markup=self.create_main_menu()
+            )
+
     async def handle_message(self, update: Update, context: ContextTypes.DEFAULT_TYPE):
         try:
             user_id = update.effective_user.id
@@ -792,6 +926,10 @@ class CafeBot:
                     "📝 عملیات مورد نظر را انتخاب کنید:",
                     reply_markup=self.create_order_management_menu()
                 )
+                return
+
+            if text == "🔄 جابه‌جایی میز":
+                await self.handle_move_table(update, context, user_id, text, state)
                 return
 
             # Player management options
@@ -877,6 +1015,10 @@ class CafeBot:
                         await self.handle_player_management(update, context, user_id, clean_table_name, state)
                         return
                         
+                    elif state['mode'] == 'move_table':
+                        await self.handle_move_table(update, context, user_id, clean_table_name, state)
+                        return
+                        
                     else:
                         await update.message.reply_text("⛔ حالت نامعتبر.")
                         return
@@ -911,6 +1053,10 @@ class CafeBot:
                     await self.add_item_to_order(update, user_id, text, state)
                 else:
                     await self.handle_edit_order(update, context, user_id, text, state)
+                return
+
+            if state.get('mode') == 'move_table':
+                await self.handle_move_table(update, context, user_id, text, state)
                 return
 
             await update.message.reply_text("⛔ لطفاً از منو استفاده کنید یا دکمه بازگشت را بزنید.")
