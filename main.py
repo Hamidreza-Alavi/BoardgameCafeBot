@@ -1,6 +1,7 @@
 import json
 import logging
 import pytz
+import re
 from datetime import datetime
 from telegram import Update, ReplyKeyboardMarkup, KeyboardButton
 from telegram.ext import ApplicationBuilder, CommandHandler, MessageHandler, ContextTypes, filters
@@ -16,8 +17,8 @@ class CafeBot:
     def __init__(self):
         self.load_menu()
         self.user_states = {}
-        self.active_orders = {}  # Store active orders for editing/adding
-        self.active_games = {}   # Store active games with detailed player info
+        self.active_orders = {}
+        self.active_games = {}
         self.category_labels = {
             "COFFEE_HOT": "☕ قهوه داغ",
             "COFFEE_COLD": "🧊 قهوه سرد",
@@ -85,31 +86,17 @@ class CafeBot:
         ]
         return ReplyKeyboardMarkup(buttons, resize_keyboard=True)
 
-    def create_quantity_menu(self) -> ReplyKeyboardMarkup:
-        buttons = [
-            [KeyboardButton("1"), KeyboardButton("2"), KeyboardButton("3")],
-            [KeyboardButton("4"), KeyboardButton("5"), KeyboardButton("6")],
-            [KeyboardButton("7"), KeyboardButton("8"), KeyboardButton("9")],
-            [KeyboardButton("بازگشت")]
-        ]
-        return ReplyKeyboardMarkup(buttons, resize_keyboard=True)
-
     def is_game_active_on_table(self, table_name: str) -> bool:
-        """Helper function to check if a game is active on a table."""
         return table_name in self.active_games
 
     def create_table_menu(self, lock_for_games=False) -> ReplyKeyboardMarkup:
-        """
-        Creates the table menu.
-        If 'lock_for_games' is True, it will show a lock icon for tables with active games.
-        """
         try:
             buttons = []
             all_tables = [f"میز {i}" for i in range(1, 17)] + ["میز آزاد", "PS", "فرمون"]
             
             table_rows = [all_tables[i:i+4] for i in range(0, 16, 4)]
-            table_rows.append(all_tables[16:18]) # میز آزاد, PS
-            table_rows.append([all_tables[18]])  # فرمون
+            table_rows.append(all_tables[16:18])
+            table_rows.append([all_tables[18]])
 
             for row_items in table_rows:
                 row = []
@@ -198,28 +185,24 @@ class CafeBot:
         return ReplyKeyboardMarkup(buttons, resize_keyboard=True)
 
     def format_player_history(self, player_groups: list) -> str:
-        """Format player history for display"""
         if not player_groups:
             return "نامشخص"
         
         if len(player_groups) == 1:
             return str(player_groups[0]['count'])
         
-        # Multiple groups - show as additions
         result = str(player_groups[0]['count'])
         for i in range(1, len(player_groups)):
             result += f"+{player_groups[i]['count']}"
         return result
 
     def format_time_history(self, player_groups: list) -> str:
-        """Format time history for display"""
         if not player_groups:
             return "نامشخص"
         
         if len(player_groups) == 1:
             return player_groups[0]['start_time']
         
-        # Multiple groups - show time ranges
         result = player_groups[0]['start_time']
         for i in range(1, len(player_groups)):
             result += f"-{player_groups[i]['start_time']}"
@@ -245,24 +228,16 @@ class CafeBot:
             return "❓ نامشخص"
 
     def get_items_by_category(self, category_label: str) -> list:
-        """
-        بازگردادن لیست نام آیتم‌ها بدون قیمت برای نمایش در منو
-        """
         for key, label in self.category_labels.items():
             if label == category_label:
                 items_data = self.items.get(key, [])
-                # اگر آیتم‌ها dictionary هستند، فقط نام را برمی‌گردانیم
                 if items_data and isinstance(items_data[0], dict):
                     return [item["name"] for item in items_data]
-                # اگر آیتم‌ها string هستند، همان‌طور که هستند برمی‌گردانیم
                 else:
                     return items_data
         return []
 
     def get_item_price(self, category_label: str, item_name: str) -> int:
-        """
-        بازگردانی قیمت یک آیتم خاص (برای استفاده آینده)
-        """
         for key, label in self.category_labels.items():
             if label == category_label:
                 items_data = self.items.get(key, [])
@@ -303,7 +278,6 @@ class CafeBot:
             iran_time = self.get_iran_time()
             username = self.get_user_info(update.effective_user)
             
-            # Initialize game with detailed player tracking
             self.active_games[table] = {
                 'player_groups': [
                     {
@@ -352,7 +326,6 @@ class CafeBot:
             return
         
         if mode and text in self.active_games and 'selected_table' not in state:
-            # Table selected
             state['selected_table'] = text
             self.user_states[user_id] = state
             
@@ -373,7 +346,6 @@ class CafeBot:
                 )
         
         elif mode and 'selected_table' in state and text.isdigit():
-            # Number entered
             await self.process_player_change(update, context, user_id, int(text), state)
 
     async def process_player_change(self, update: Update, context: ContextTypes.DEFAULT_TYPE, user_id: int, count: int, state: dict):
@@ -394,7 +366,6 @@ class CafeBot:
                 await update.message.reply_text("❌ تعداد باید مثبت باشد.")
                 return
             
-            # Add new player group
             game_info['player_groups'].append({
                 'count': count,
                 'start_time': iran_time,
@@ -426,7 +397,6 @@ class CafeBot:
                 )
                 return
             
-            # Add removal record (negative count)
             game_info['player_groups'].append({
                 'count': -count,
                 'start_time': iran_time,
@@ -453,7 +423,6 @@ class CafeBot:
         )
 
     async def show_table_status(self, update: Update):
-        """Show status of all tables"""
         active_games = len(self.active_games)
         active_orders = len(self.active_orders)
         
@@ -492,7 +461,6 @@ class CafeBot:
             game_info = self.active_games[text]
             iran_time = self.get_iran_time()
 
-            # Get order information for the table
             order_string = "🍽 سفارشات: ثبت نشده است"
             if text in self.active_orders:
                 order_info = self.active_orders[text]
@@ -500,11 +468,9 @@ class CafeBot:
                 if items_list:
                     order_string = f"🍽 سفارشات: {', '.join(items_list)}"
             
-            # Format player and time information
             player_display = self.format_player_history(game_info['player_groups'])
             time_display = self.format_time_history(game_info['player_groups'])
             
-            # Construct the message with enhanced formatting
             message = (
                 f"🏁 پایان بازی\n"
                 f"➖➖➖➖➖➖➖➖\n"
@@ -520,7 +486,6 @@ class CafeBot:
             try:
                 await context.bot.send_message(chat_id=CHANNEL_CHAT_ID, text=message)
                 
-                # Remove game but keep order until payment is confirmed
                 del self.active_games[text]
                 self.clear_user_state(user_id)
                 
@@ -562,14 +527,19 @@ class CafeBot:
                 state['selected_item'] = text
                 self.user_states[user_id] = state
                 await update.message.reply_text(
-                    f"📌 {text}\nتعداد مورد نظر را انتخاب کنید:",
-                    reply_markup=self.create_quantity_menu()
+                    f"📌 {text}\nلطفاً تعداد مورد نیاز را وارد کنید (عدد):",
+                    reply_markup=ReplyKeyboardMarkup([[KeyboardButton("بازگشت")]], resize_keyboard=True)
                 )
             else:
                 await update.message.reply_text("⛔ لطفاً از لیست آیتم‌ها انتخاب کنید.")
                 
         elif state.get("selected_item") and text.isdigit():
-            await self.add_item_to_order(update, user_id, int(text), state)
+            quantity = int(text)
+            if quantity <= 0:
+                await update.message.reply_text("❌ تعداد باید بیشتر از صفر باشد. لطفاً عدد صحیح وارد کنید:")
+                return
+                
+            await self.add_item_to_order(update, user_id, quantity, state)
             
         else:
             await update.message.reply_text("⛔ لطفاً از منو استفاده کنید.")
@@ -817,7 +787,6 @@ class CafeBot:
             clean_table_name = text.replace("🔒 ", "")
             
             if state['move_step'] == 'select_source':
-                # بررسی وجود میز مبدأ
                 if clean_table_name not in self.active_games and clean_table_name not in self.active_orders:
                     await update.message.reply_text("❌ میز انتخابی هیچ فعالیت فعالی ندارد!")
                     return
@@ -839,7 +808,6 @@ class CafeBot:
                     
                 source_table = state['source_table']
                 
-                # بررسی میز مقصد
                 if clean_table_name == source_table:
                     await update.message.reply_text("❌ میز مبدأ و مقصد نمی‌توانند یکسان باشند!")
                     return
@@ -848,7 +816,6 @@ class CafeBot:
                     await update.message.reply_text("❌ میز مقصد در حال حاضر بازی فعال دارد!")
                     return
                     
-                # انجام جابه‌جایی
                 await self.process_table_move(update, context, user_id, source_table, clean_table_name)
                 return
                 
@@ -858,11 +825,9 @@ class CafeBot:
         username = self.get_user_info(update.effective_user)
         iran_time = self.get_iran_time()
         
-        # جمع‌آوری اطلاعات قبل از جابه‌جایی
         had_game = source_table in self.active_games
         had_order = source_table in self.active_orders
         
-        # انجام جابه‌جایی
         if had_game:
             self.active_games[target_table] = self.active_games.pop(source_table)
             game_info = self.active_games[target_table]
@@ -873,7 +838,6 @@ class CafeBot:
             order_info = self.active_orders[target_table]
             items_count = sum(item['quantity'] for item in order_info.get('items', []))
         
-        # ارسال پیام به کانال
         message = (
             f"🔄 جابه‌جایی میز\n"
             f"➖➖➖➖➖➖➖➖\n"
@@ -928,7 +892,6 @@ class CafeBot:
         invoice_text = f"🧾 فاکتور میز {table_name}\n"
         invoice_text += "➖➖➖➖➖➖➖➖\n"
         
-        # Add game information if exists
         if table_name in self.active_games:
             game_info = self.active_games[table_name]
             player_display = self.format_player_history(game_info['player_groups'])
@@ -941,7 +904,6 @@ class CafeBot:
                 f"➖➖➖➖➖➖➖➖\n"
             )
         
-        # Add order information if exists
         if table_name in self.active_orders:
             order_info = self.active_orders[table_name]
             items_list = [f"{item['name']} ({item['quantity']} عدد)" for item in order_info.get('items', [])]
@@ -958,22 +920,30 @@ class CafeBot:
             reply_markup=self.create_invoice_menu(table_name)
         )
 
-    async def process_payment(self, update: Update, context: ContextTypes.DEFAULT_TYPE, table_name: str):
+    async def process_payment(self, update: Update, context: ContextTypes.DEFAULT_TYPE, text: str):
+        match = re.search(r"\((.+?)\)", text)
+        if not match:
+            await update.message.reply_text(
+                "❌ خطا در شناسایی میز. لطفاً دوباره تلاش کنید.",
+                reply_markup=self.create_main_menu()
+            )
+            return
+            
+        table_name = match.group(1)
+        
         if table_name not in self.active_orders and table_name not in self.active_games:
             await update.message.reply_text(
-                "❌ این میز قبلاً تسویه شده است.",
+                f"❌ میز {table_name} قبلاً تسویه شده یا فعالیتی ندارد.",
                 reply_markup=self.create_main_menu()
             )
             return
         
-        # Collect information before clearing
         game_info = self.active_games.pop(table_name, None)
         order_info = self.active_orders.pop(table_name, None)
         
         username = self.get_user_info(update.effective_user)
         iran_time = self.get_iran_time()
         
-        # Prepare payment message
         message = (
             f"💳 تسویه حساب میز {table_name}\n"
             f"➖➖➖➖➖➖➖➖\n"
@@ -1032,7 +1002,10 @@ class CafeBot:
                 self.clear_user_state(user_id)
                 return await self.start_command(update, context)
 
-            # Main menu options
+            if text.startswith("💳 پرداخت انجام شد ("):
+                await self.process_payment(update, context, text)
+                return
+
             if text == "🎲 شروع بازی":
                 self.user_states[user_id] = {'mode': 'game'}
                 await update.message.reply_text(
@@ -1080,13 +1053,6 @@ class CafeBot:
                 await self.handle_invoice_request(update, context, user_id)
                 return
 
-            # Handle payment confirmation
-            if text.startswith("💳 پرداخت انجام شد ("):
-                table_name = text[text.find("(")+1:text.find(")")]
-                await self.process_payment(update, context, table_name)
-                return
-
-            # Player management options
             if text == "➕ افزودن بازیکن":
                 self.user_states[user_id] = {'mode': 'player_management', 'player_mode': 'add'}
                 await update.message.reply_text(
@@ -1103,7 +1069,6 @@ class CafeBot:
                 )
                 return
 
-            # Order management options
             if text == "➕ افزودن به سفارش":
                 self.user_states[user_id] = {'mode': 'add_to_order'}
                 await update.message.reply_text(
@@ -1120,13 +1085,11 @@ class CafeBot:
                 )
                 return
 
-            # Handle table selection
             if text.startswith("میز") or text in ("میز آزاد", "PS", "فرمون"):
                 try:
                     clean_table_name = text.replace("🔒 ", "")
                     
                     if 'mode' not in state:
-                        # Check if this is for invoice request
                         await self.show_invoice(update, context, clean_table_name)
                         return
                     
@@ -1186,7 +1149,6 @@ class CafeBot:
                     )
                 return
 
-            # Handle specific mode flows
             if state.get('mode') == 'game' and 'table' in state and 'players' not in state:
                 await self.handle_game_flow(update, context, user_id, text, state)
                 return
@@ -1205,7 +1167,14 @@ class CafeBot:
 
             if state.get('mode') == 'edit_order':
                 if state.get('current_category') and text not in self.category_labels.values():
-                    await self.add_item_to_order(update, user_id, text, state)
+                    if text.isdigit():
+                        quantity = int(text)
+                        if quantity > 0:
+                            await self.add_item_to_order(update, user_id, quantity, state)
+                        else:
+                            await update.message.reply_text("❌ تعداد باید بیشتر از صفر باشد. لطفاً عدد صحیح وارد کنید:")
+                    else:
+                        await update.message.reply_text("❌ لطفاً یک عدد صحیح وارد کنید:")
                 else:
                     await self.handle_edit_order(update, context, user_id, text, state)
                 return
